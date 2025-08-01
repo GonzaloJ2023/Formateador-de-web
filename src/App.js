@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 
+// URL del backend de Python alojado en Render
+const API_URL = 'https://formateador-de-web-app.onrender.com';
+
 // Componente principal de la aplicación
 const App = () => {
     const [selectedFile, setSelectedFile] = useState(null);
@@ -39,8 +42,8 @@ const App = () => {
             if (file && file.name.endsWith('.docx')) {
                 setSelectedFile(file);
                 setMessage(`Archivo seleccionado: ${file.name}`);
-                setErrorLog([]); 
-                setProcessedHtmlContent(''); 
+                setErrorLog([]);
+                setProcessedHtmlContent('');
                 setDocxBase64(''); // Limpiar el Base64 al seleccionar un nuevo archivo
             } else {
                 setSelectedFile(null);
@@ -77,8 +80,8 @@ const App = () => {
         setIsProcessing(true);
         setProgress(0);
         setMessage('Procesando documento...');
-        setErrorLog([]); 
-        setProcessedHtmlContent(''); 
+        setErrorLog([]);
+        setProcessedHtmlContent('');
         setDocxBase64('');
 
         try {
@@ -87,7 +90,7 @@ const App = () => {
             formData.append('format_text', formatText);
 
             // Llamada al backend de Python alojado en Render
-            const response = await fetch('https://formateador-de-web-app.onrender.com/process-document', {
+            const response = await fetch(`${API_URL}/process-document`, {
                 method: 'POST',
                 body: formData,
             });
@@ -132,7 +135,7 @@ const App = () => {
             const docxBytes = Uint8Array.from(atob(docxBase64), c => c.charCodeAt(0));
             const blob = new Blob([docxBytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
             const url = URL.createObjectURL(blob);
-            
+
             // Crear y activar el enlace de descarga
             const link = document.createElement('a');
             link.href = url;
@@ -166,12 +169,12 @@ const App = () => {
                     padding: 1.5rem;
                     max-height: 400px;
                     overflow-y: auto;
-                    white-space: pre-wrap; 
+                    white-space: pre-wrap;
                     font-family: 'Inter', sans-serif;
                     color: #e5e7eb;
                 }
                 .html-preview-container p { margin-bottom: 0.5rem; }
-                
+
                 .file-input-label {
                   background-color: #4f46e5;
                   color: white;
@@ -276,7 +279,7 @@ const App = () => {
                         <h2 className="text-2xl font-bold text-white mb-4">
                             <i className="fas fa-eye text-yellow-400 mr-2"></i> Resultados
                         </h2>
-                        
+
                         {/* Previsualización HTML */}
                         <div>
                             <h3 className="text-xl font-semibold text-gray-200 mb-2">Previsualización del Documento:</h3>
@@ -300,7 +303,7 @@ const App = () => {
                                            outline-none resize-y"
                                 placeholder="El contenido Base64 del documento aparecerá aquí..."
                             ></textarea>
-                            
+
                             <div className="mt-4 text-center">
                                 <button
                                     onClick={handleDownload}
