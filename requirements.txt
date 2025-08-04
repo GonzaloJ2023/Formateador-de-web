@@ -1,4 +1,0 @@
-Flask
-python-docx
-Flask-Cors
-gunicorn
