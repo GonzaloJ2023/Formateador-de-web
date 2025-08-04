@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Procesador de Documentos Word</title>
+    <!-- Incluye Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Incluye Font Awesome para iconos -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Incluye la fuente Inter de Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Estilos personalizados para el contenedor de previsualización */
+        .html-preview-container {
+            background-color: #1f2937; /* bg-gray-800 */
+            border-radius: 0.5rem; /* rounded-lg */
+            padding: 1.5rem; /* p-6 */
+            max-height: 50vh;
+            overflow-y: auto;
+            white-space: pre-wrap; /* Mantiene saltos de línea y espacios */
+            line-height: 1.5;
+        }
+        /* Estilos para el botón de subir archivo */
+        .file-input-label {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            background-color: #3b82f6; /* bg-blue-500 */
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            border-radius: 0.5rem;
+            transition-property: background-color;
+            transition-duration: 300ms;
+        }
+        .file-input-label:hover {
+            background-color: #2563eb; /* bg-blue-600 */
+        }
+        .file-input {
+            display: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 p-8 min-h-screen flex items-center justify-center">
+    <div class="bg-gray-800 p-8 rounded-xl shadow-2xl max-w-4xl w-full flex flex-col items-center space-y-8">
+        <div class="flex items-center space-x-4">
+            <i class="fas fa-file-word text-4xl text-blue-500"></i>
+            <h1 class="text-4xl font-bold text-center">Procesador de Documentos Word</h1>
+        </div>
+
+        <!-- Sección de subida de archivo -->
+        <div class="w-full flex flex-col md:flex-row items-center justify-center space-y-4 md:space-y-0 md:space-x-4">
+            <label for="file-upload" class="file-input-label">
+                <i class="fas fa-upload mr-2"></i> Elegir Archivo .docx
+            </label>
+            <input id="file-upload" type="file" class="file-input" accept=".docx">
+            <span id="file-name" class="text-gray-400 italic mt-2 md:mt-0">Ningún archivo seleccionado</span>
+        </div>
+
+        <!-- Área de texto para la descripción del formato -->
+        <div class="w-full">
+            <label for="format-text" class="block text-lg font-semibold mb-2">Ingresa el texto a remover (opcional):</label>
+            <textarea id="format-text" class="w-full p-4 bg-gray-700 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500" rows="3" placeholder="Ej: Escribe 'Confidencial' para remover todos los párrafos que contengan esa palabra."></textarea>
+        </div>
+
+        <!-- Botón de procesamiento -->
+        <button id="process-button" class="w-full md:w-1/2 p-4 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg shadow-lg transition-colors duration-300 transform active:scale-95">
+            <i class="fas fa-magic mr-2"></i> Procesar Documento
+        </button>
+
+        <!-- Área de estado y resultados (inicialmente oculta) -->
+        <div id="status-area" class="w-full text-center hidden">
+            <p id="status-message" class="text-lg text-yellow-500">
+                <i class="fas fa-spinner fa-spin mr-2"></i> Procesando, por favor espera...
+            </p>
+        </div>
+
+        <div id="results-area" class="w-full hidden space-y-6">
+            <!-- Sección de previsualización -->
+            <div>
+                <h2 class="text-2xl font-bold mb-4">Previsualización del Documento Procesado</h2>
+                <div id="html-preview" class="html-preview-container">
+                    <p class="text-gray-400 italic">El contenido procesado aparecerá aquí...</p>
+                </div>
+            </div>
+
+            <!-- Sección de descarga -->
+            <div class="flex flex-col items-center justify-center space-y-4 md:flex-row md:space-y-0 md:space-x-4">
+                <button id="download-button" class="p-4 bg-blue-500 hover:bg-blue-600 text-white font-bold rounded-lg shadow-lg transition-colors duration-300 transform active:scale-95">
+                    <i class="fas fa-download mr-2"></i> Descargar Documento Procesado
+                </button>
+            </div>
+            
+            <!-- Área oculta para almacenar el Base64 -->
+            <textarea id="docx-base64" class="hidden"></textarea>
+        </div>
+    </div>
+
+    <!-- Script de JavaScript para la lógica del frontend -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Referencias a los elementos del DOM
+            const fileUpload = document.getElementById('file-upload');
+            const fileNameSpan = document.getElementById('file-name');
+            const formatTextarea = document.getElementById('format-text');
+            const processButton = document.getElementById('process-button');
+            const statusArea = document.getElementById('status-area');
+            const statusMessage = document.getElementById('status-message');
+            const resultsArea = document.getElementById('results-area');
+            const htmlPreview = document.getElementById('html-preview');
+            const downloadButton = document.getElementById('download-button');
+            const docxBase64Textarea = document.getElementById('docx-base64');
+
+            // URL del backend en Render
+            const API_URL = 'https://formateador-de-web-app.onrender.com/process-document';
+            let uploadedFile = null;
+
+            // Maneja el cambio del input de archivo
+            fileUpload.addEventListener('change', (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    if (file.name.endsWith('.docx')) {
+                        uploadedFile = file;
+                        fileNameSpan.textContent = file.name;
+                        // Oculta resultados anteriores
+                        resultsArea.classList.add('hidden');
+                        statusArea.classList.add('hidden');
+                        statusMessage.innerHTML = '';
+                    } else {
+                        uploadedFile = null;
+                        fileNameSpan.textContent = 'Tipo de archivo no válido';
+                        alert('Por favor, selecciona un archivo .docx');
+                    }
+                } else {
+                    uploadedFile = null;
+                    fileNameSpan.textContent = 'Ningún archivo seleccionado';
+                }
+            });
+
+            // Maneja el clic en el botón de procesamiento
+            processButton.addEventListener('click', async () => {
+                if (!uploadedFile) {
+                    alert('Por favor, sube un archivo .docx primero.');
+                    return;
+                }
+
+                // Deshabilita el botón y muestra el estado
+                processButton.disabled = true;
+                processButton.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i> Procesando...`;
+                statusArea.classList.remove('hidden');
+                resultsArea.classList.add('hidden');
+                
+                const formData = new FormData();
+                formData.append('file', uploadedFile);
+                formData.append('format_text', formatTextarea.value);
+
+                try {
+                    const response = await fetch(API_URL, {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Error desconocido del servidor.');
+                    }
+
+                    const result = await response.json();
+                    
+                    // Muestra los resultados
+                    htmlPreview.innerHTML = result.html_content;
+                    docxBase64Textarea.value = result.docx_base64;
+                    
+                    statusMessage.innerHTML = `<i class="fas fa-check-circle mr-2 text-green-500"></i> ¡Procesamiento completado!`;
+                    statusArea.classList.remove('hidden');
+                    resultsArea.classList.remove('hidden');
+
+                } catch (error) {
+                    statusMessage.innerHTML = `<i class="fas fa-times-circle mr-2 text-red-500"></i> Error: ${error.message}`;
+                    statusArea.classList.remove('hidden');
+                } finally {
+                    // Habilita el botón de nuevo
+                    processButton.disabled = false;
+                    processButton.innerHTML = `<i class="fas fa-magic mr-2"></i> Procesar Documento`;
+                }
+            });
+
+            // Maneja el clic en el botón de descarga
+            downloadButton.addEventListener('click', () => {
+                const docxBase64 = docxBase64Textarea.value;
+                if (!docxBase64) {
+                    alert('No hay documento para descargar.');
+                    return;
+                }
+
+                try {
+                    // Decodifica la cadena Base64
+                    const byteCharacters = atob(docxBase64);
+                    const byteNumbers = new Array(byteCharacters.length);
+                    for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                    }
+                    const byteArray = new Uint8Array(byteNumbers);
+                    const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+
+                    // Crea un enlace de descarga
+                    const downloadUrl = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = downloadUrl;
+                    link.download = 'documento_corregido.docx';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(downloadUrl);
+                } catch (error) {
+                    alert('Error al descargar el archivo: ' + error.message);
+                }
+            });
+        });
+    </script>
+</body>
+</html>
