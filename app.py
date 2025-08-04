@@ -1,117 +1,134 @@
+# Importaciones necesarias para el servidor web y el procesamiento de Word.
+import os
 import io
 import base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from docx import Document
-from docx.shared import Inches
-import logging
+from lxml import etree
 
+# --------------------------------------------------------------------------
+# Configuración del Servidor Flask
+# --------------------------------------------------------------------------
+
+# Crea la instancia de la aplicación Flask.
 app = Flask(__name__)
-CORS(app) # Habilita CORS para todas las rutas
+# Habilita CORS (Cross-Origin Resource Sharing) para permitir que el frontend
+# acceda a este servidor desde otro dominio (ej. el dominio de Render Static Website).
+CORS(app)
 
-# Configuración básica de logging para ver los mensajes en la terminal
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# --------------------------------------------------------------------------
+# Funciones Auxiliares para el Procesamiento del Documento
+# --------------------------------------------------------------------------
 
-def docx_to_html(doc):
+def clean_and_process_document(document_bytes, text_to_remove=None):
     """
-    Convierte un objeto de documento de Word a una cadena HTML simple.
-    Ahora incluye la lógica para conservar el formato de negrita, cursiva y subrayado.
+    Procesa un documento de Word desde datos binarios, eliminando párrafos
+    que contengan un texto específico, y devuelve el documento modificado
+    en un objeto BytesIO.
     """
-    html_content_parts = []
-    for paragraph in doc.paragraphs:
-        html_paragraph = ""
-        # Iterar sobre las "runs" (fragmentos de texto con el mismo formato)
-        for run in paragraph.runs:
-            text = run.text
-            if run.bold:
-                text = f"<strong>{text}</strong>"
-            if run.italic:
-                text = f"<em>{text}</em>"
-            if run.underline:
-                text = f"<u>{text}</u>"
-            html_paragraph += text
-        
-        # Si el párrafo contiene texto, añadirlo como una etiqueta <p>
-        if html_paragraph.strip():
-            html_content_parts.append(f"<p>{html_paragraph}</p>")
+    try:
+        # Carga el documento de Word desde un objeto BytesIO para evitar
+        # guardar archivos temporales en el disco.
+        documento = Document(io.BytesIO(document_bytes))
+
+        parrafos_a_eliminar = []
+        for parrafo in documento.paragraphs:
+            parrafo_texto_limpio = parrafo.text.strip()
             
-    # Si no hay contenido, proporcionar un mensaje por defecto
-    if not html_content_parts:
-        return "<p>El documento resultante está vacío o no se pudo extraer contenido para previsualizar.</p>"
-        
-    return "".join(html_content_parts)
+            es_parrafo_vacio = not parrafo_texto_limpio
+            contiene_texto_a_remover = False
+            if text_to_remove:
+                contiene_texto_a_remover = text_to_remove.lower() in parrafo_texto_limpio.lower()
 
+            if es_parrafo_vacio or contiene_texto_a_remover:
+                parrafos_a_eliminar.append(parrafo)
+
+        # Elimina los párrafos de la lista del documento para preservar el formato.
+        for parrafo in parrafos_a_eliminar:
+            p = parrafo._element
+            p.getparent().remove(p)
+
+        # Guarda el documento modificado en un buffer de memoria.
+        modificado_bytes = io.BytesIO()
+        documento.save(modificado_bytes)
+        modificado_bytes.seek(0)
+        return modificado_bytes
+
+    except Exception as e:
+        print(f"Error en el procesamiento del documento: {e}")
+        return None
+
+def get_html_preview(document_bytes):
+    """
+    Genera una vista previa en HTML del documento de Word.
+    Para este ejemplo, simplemente extrae el texto y lo formatea.
+    Una implementación más avanzada necesitaría una librería como `pandoc` o
+    analizar el XML del documento.
+    """
+    try:
+        documento = Document(io.BytesIO(document_bytes))
+        html_content = ""
+        for parrafo in documento.paragraphs:
+            # Reemplaza saltos de línea con etiquetas <br>
+            text_with_breaks = parrafo.text.replace('\n', '<br/>')
+            # Envuelve cada párrafo en una etiqueta <p>
+            html_content += f"<p>{text_with_breaks}</p>"
+        return html_content
+    except Exception as e:
+        return f"Error al generar la vista previa: {e}"
+
+# --------------------------------------------------------------------------
+# Ruta de la API
+# --------------------------------------------------------------------------
 
 @app.route('/process-document', methods=['POST'])
 def process_document():
-    logging.info("Solicitud recibida en /process-document")
+    """
+    Maneja la petición POST desde el frontend.
+    """
+    # Verifica que se haya subido un archivo.
+    if 'file' not in request.files:
+        return jsonify({'error': 'No se encontró el archivo en la solicitud'}), 400
+
+    file = request.files['file']
+    text_to_remove = request.form.get('format_text', '')
+
+    # Verifica que el archivo no esté vacío y tenga la extensión correcta.
+    if file.filename == '':
+        return jsonify({'error': 'Nombre de archivo inválido'}), 400
+    if not file.filename.endswith('.docx'):
+        return jsonify({'error': 'Tipo de archivo no soportado. Por favor, sube un archivo .docx'}), 400
+
     try:
-        # 1. Verificar si se subió un archivo
-        if 'file' not in request.files:
-            logging.error("No se encontró el archivo en la solicitud.")
-            return jsonify({'error': 'No se encontró el archivo en la solicitud.'}), 400
-
-        file = request.files['file']
-        format_text = request.form.get('format_text', '').strip()
-
-        if file.filename == '':
-            logging.error("No se seleccionó ningún archivo.")
-            return jsonify({'error': 'No se seleccionó ningún archivo.'}), 400
-
-        if not format_text:
-            logging.error("El texto de formato a remover/cambiar está vacío.")
-            return jsonify({'error': 'Por favor, especifica qué quieres remover o cambiar.'}), 400
-
-        # 2. Leer el documento de Word desde la solicitud
-        original_doc_bytes = io.BytesIO(file.read())
-        document = Document(original_doc_bytes)
-        logging.info(f"Documento '{file.filename}' cargado exitosamente.")
-
-        # 3. Crear un nuevo documento para guardar el contenido modificado
-        modified_document = Document()
+        # Lee el contenido del archivo subido en memoria.
+        document_bytes = file.read()
         
-        # 4. Procesar y copiar párrafos, excluyendo los que coinciden con el texto a remover
-        for paragraph in document.paragraphs:
-            if format_text.lower() not in paragraph.text.lower():
-                # Copiar el párrafo y su formato al nuevo documento
-                new_paragraph = modified_document.add_paragraph(paragraph.text, style=paragraph.style.name)
-                for run in paragraph.runs:
-                    new_run = new_paragraph.add_run(run.text)
-                    new_run.bold = run.bold
-                    new_run.italic = run.italic
-                    new_run.underline = run.underline
-                    if run.font.name:
-                        new_run.font.name = run.font.name
-                    if run.font.size:
-                        new_run.font.size = run.font.size
-            else:
-                logging.info(f"Párrafo eliminado (contiene '{format_text}'): {paragraph.text[:50]}...")
+        # Llama a la función que procesa el documento.
+        processed_document_bytes = clean_and_process_document(document_bytes, text_to_remove)
 
-        # 5. Guardar el documento modificado en memoria
-        modified_doc_bytes = io.BytesIO()
-        modified_document.save(modified_doc_bytes)
-        modified_doc_bytes.seek(0) # Volver al inicio del stream
-        logging.info("Documento modificado y guardado en memoria.")
+        if processed_document_bytes:
+            # Genera la vista previa en HTML del documento procesado.
+            html_preview = get_html_preview(processed_document_bytes.getvalue())
+            
+            # Codifica el documento procesado en Base64 para enviarlo al frontend.
+            docx_base64 = base64.b64encode(processed_document_bytes.getvalue()).decode('utf-8')
 
-        # 6. Codificar el documento modificado a Base64 para enviarlo al frontend
-        encoded_docx = base64.b64encode(modified_doc_bytes.read()).decode('utf-8')
-
-        # 7. Unir las partes HTML para la previsualización
-        final_html_content = docx_to_html(modified_document)
-
-        logging.info("Procesamiento completado exitosamente.")
-        return jsonify({
-            'message': 'Documento procesado exitosamente',
-            'docx_base64': encoded_docx,
-            'html_content': final_html_content
-        }), 200
+            # Devuelve la respuesta en formato JSON.
+            return jsonify({
+                'html_content': html_preview,
+                'docx_base64': docx_base64
+            })
+        else:
+            return jsonify({'error': 'Error interno al procesar el documento.'}), 500
 
     except Exception as e:
-        logging.exception("Error inesperado durante el procesamiento del documento.")
-        return jsonify({'error': f'Ocurrió un error en el servidor: {str(e)}'}), 500
+        return jsonify({'error': str(e)}), 500
+
+# --------------------------------------------------------------------------
+# Punto de entrada del script
+# --------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    # Ejecuta la aplicación Flask en el puerto 5000
-    app.run(debug=True, port=5000)
-
-
+    # Ejecuta la aplicación.
+    app.run(debug=True, host='0.0.0.0', port=os.environ.get("PORT", 5000))
